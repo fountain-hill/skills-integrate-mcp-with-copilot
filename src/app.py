@@ -5,11 +5,16 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+import json
+import secrets
+import time
+from typing import Optional
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
+from pydantic import BaseModel
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -18,6 +23,80 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+teacher_sessions = {}
+teacher_credentials_path = current_dir / "teachers.json"
+session_duration = 8 * 60 * 60
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def get_authenticated_teacher(
+    teacher_session: Optional[str] = Cookie(default=None),
+):
+    session = teacher_sessions.get(teacher_session or "")
+    if session is None or session[1] <= time.monotonic():
+        teacher_sessions.pop(teacher_session or "", None)
+        raise HTTPException(status_code=401, detail="Teacher login required")
+    return session[0]
+
+
+@app.post("/auth/login")
+def login(credentials: LoginRequest, request: Request, response: Response):
+    try:
+        with teacher_credentials_path.open(encoding="utf-8") as credentials_file:
+            teacher_credentials = json.load(credentials_file)
+    except FileNotFoundError:
+        teacher_credentials = {}
+    except (OSError, json.JSONDecodeError):
+        raise HTTPException(
+            status_code=503, detail="Teacher login is not configured correctly"
+        )
+
+    if not isinstance(teacher_credentials, dict):
+        raise HTTPException(
+            status_code=503, detail="Teacher login is not configured correctly"
+        )
+
+    password = teacher_credentials.get(credentials.username)
+    if not isinstance(password, str) or not secrets.compare_digest(
+        password, credentials.password
+    ):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    session_token = secrets.token_urlsafe(32)
+    teacher_sessions[session_token] = (
+        credentials.username,
+        time.monotonic() + session_duration,
+    )
+    response.set_cookie(
+        key="teacher_session",
+        value=session_token,
+        max_age=session_duration,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+    )
+    return {"message": "Teacher login successful", "username": credentials.username}
+
+
+@app.get("/auth/session")
+def get_teacher_session(
+    username: str = Depends(get_authenticated_teacher),
+):
+    return {"username": username}
+
+
+@app.post("/auth/logout")
+def logout(
+    response: Response,
+    teacher_session: Optional[str] = Cookie(default=None),
+):
+    teacher_sessions.pop(teacher_session or "", None)
+    response.delete_cookie(key="teacher_session", httponly=True, samesite="lax")
+    return {"message": "Teacher logout successful"}
 
 # In-memory activity database
 activities = {
@@ -89,7 +168,11 @@ def get_activities():
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(
+    activity_name: str,
+    email: str,
+    username: str = Depends(get_authenticated_teacher),
+):
     """Sign up a student for an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -111,7 +194,11 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(
+    activity_name: str,
+    email: str,
+    username: str = Depends(get_authenticated_teacher),
+):
     """Unregister a student from an activity"""
     # Validate activity exists
     if activity_name not in activities:
