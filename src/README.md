@@ -5,7 +5,9 @@ A super simple FastAPI application that allows students to view and sign up for 
 ## Features
 
 - View all available extracurricular activities
-- Sign up for activities
+- View registered participants and remaining capacity
+- Teachers can sign students up or unregister them after logging in
+- Students can browse activities and participants without logging in
 
 ## Getting Started
 
@@ -15,13 +17,21 @@ A super simple FastAPI application that allows students to view and sign up for 
    pip install fastapi uvicorn
    ```
 
-2. Run the application:
+2. Create the local teacher credentials file by copying `teachers.example.json` to `teachers.json`. Replace the example key with each teacher's username and set a unique password string as its value. The file is ignored by Git; do not commit real teacher credentials.
+
+    ```json
+    {
+       "teacher-username": "a-unique-password"
+    }
+    ```
+
+3. Run the application:
 
    ```
    python app.py
    ```
 
-3. Open your browser and go to:
+4. Open your browser and go to:
    - API documentation: http://localhost:8000/docs
    - Alternative documentation: http://localhost:8000/redoc
 
@@ -30,7 +40,11 @@ A super simple FastAPI application that allows students to view and sign up for 
 | Method | Endpoint                                                          | Description                                                         |
 | ------ | ----------------------------------------------------------------- | ------------------------------------------------------------------- |
 | GET    | `/activities`                                                     | Get all activities with their details and current participant count |
-| POST   | `/activities/{activity_name}/signup?email=student@mergington.edu` | Sign up for an activity                                             |
+| POST   | `/auth/login`                                                      | Log in with a teacher username and password                         |
+| GET    | `/auth/session`                                                    | Check the current teacher session                                   |
+| POST   | `/auth/logout`                                                     | End the current teacher session                                     |
+| POST   | `/activities/{activity_name}/signup?email=student@mergington.edu` | Teacher-only student signup                                         |
+| DELETE | `/activities/{activity_name}/unregister?email=student@mergington.edu` | Teacher-only unregister                                             |
 
 ## Data Model
 
@@ -47,4 +61,4 @@ The application uses a simple data model with meaningful identifiers:
    - Name
    - Grade level
 
-All data is stored in memory, which means data will be reset when the server restarts.
+Activity and registration data, along with teacher sessions, are stored in memory and reset when the server restarts. Teacher credentials are read from the local `teachers.json` file.
